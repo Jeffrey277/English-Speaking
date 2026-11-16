@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>English Speaking Notebook</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --text: #1f2328; --muted: #6b7280; --line: #e5e7eb;
+    --accent: #2f7d5b; --bad: #c2410c; --bad-bg: #fff4ed; --good: #15803d; --good-bg: #effaf3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171a; --card: #1e2125; --text: #e6e8eb; --muted: #9aa1ab; --line: #2e3238;
+      --accent: #5cc095; --bad: #fb923c; --bad-bg: #2a1d14; --good: #4ade80; --good-bg: #132619;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  main { max-width: 820px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  nav { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; }
+  nav button { border: 1px solid var(--line); background: var(--card); color: var(--text);
+    padding: 8px 14px; border-radius: 999px; cursor: pointer; font: inherit; }
+  nav button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 20px; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .stat b { display: block; font-size: 22px; }
+  .stat span { color: var(--muted); font-size: 13px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .card h3 { margin: 0 0 6px; font-size: 16px; }
+  .meta { color: var(--muted); font-size: 13px; }
+  .pair { margin: 10px 0; padding-top: 10px; border-top: 1px dashed var(--line); }
+  .said { background: var(--bad-bg); color: var(--bad); padding: 2px 6px; border-radius: 6px; text-decoration: line-through; }
+  .better { background: var(--good-bg); color: var(--good); padding: 2px 6px; border-radius: 6px; font-weight: 600; }
+  .why { color: var(--muted); font-size: 14px; margin-top: 4px; }
+  .tag { display: inline-block; font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; margin-left: 6px; color: var(--muted); }
+  .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; margin-top: 4px; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+  .quiz .answer { display: none; }
+  .quiz.open .answer { display: block; }
+  .quiz button { margin-top: 8px; font: inherit; border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 8px; padding: 4px 12px; cursor: pointer; }
+  ul { padding-left: 20px; margin: 6px 0; }
+  .empty { text-align: center; color: var(--muted); padding: 40px 16px; }
+  @media (max-width: 520px) { .stats { grid-template-columns: 1fr 1fr 1fr; } .stat b { font-size: 18px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>English Speaking Notebook</h1>
+  <p class="sub">Claude와의 영어 대화 기록 · 교정 · 오답노트</p>
+  <div class="stats" id="stats"></div>
+  <nav id="tabs">
+    <button data-tab="review" class="on">오답노트</button>
+    <button data-tab="sessions">대화 기록</button>
+    <button data-tab="quiz">복습 퀴즈</button>
+    <button data-tab="expr">표현 모음</button>
+  </nav>
+  <section id="view"></section>
+</main>
+<script src="data.js"></script>
+<script>
+const S = window.SESSIONS || [];
+const CAT = { grammar: "문법", vocabulary: "어휘", naturalness: "자연스러움", preposition: "전치사",
+  article: "관사", tense: "시제", spelling: "철자", etc: "기타" };
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const all = S.flatMap(s => (s.corrections || []).map(c => ({ ...c, date: s.date, topic: s.topic })));
+const exprs = S.flatMap(s => s.expressions || []);
+
+document.getElementById("stats").innerHTML =
+  `<div class="stat"><b>${S.length}</b><span>대화 세션</span></div>
+   <div class="stat"><b>${all.length}</b><span>교정 문장</span></div>
+   <div class="stat"><b>${exprs.length}</b><span>배운 표현</span></div>`;
+
+const pair = c => `<div class="pair"><div><span class="said">${esc(c.said)}</span></div>
+  <div>→ <span class="better">${esc(c.better)}</span><span class="tag">${CAT[c.category] || esc(c.category)}</span></div>
+  <div class="why">${esc(c.why)}</div></div>`;
+const empty = msg => `<div class="empty">${msg}</div>`;
+
+const views = {
+  review() {
+    if (!all.length) return empty("아직 기록이 없어요. Claude와 대화한 뒤 “정리해줘”라고 말하면 여기에 쌓입니다.");
+    const groups = {};
+    all.forEach(c => (groups[c.category || "etc"] ||= []).push(c));
+    const sorted = Object.entries(groups).sort((a, b) => b[1].length - a[1].length);
+    const max = sorted[0][1].length;
+    return `<div class="card"><h3>자주 틀리는 유형</h3>${sorted.map(([k, v]) =>
+      `<div style="margin-top:8px">${CAT[k] || esc(k)} <span class="meta">${v.length}회</span>
+       <div class="bar"><i style="width:${v.length / max * 100}%"></i></div></div>`).join("")}</div>` +
+      sorted.map(([k, v]) => `<div class="card"><h3>${CAT[k] || esc(k)} <span class="meta">${v.length}개</span></h3>
+        ${v.map(c => pair(c) + `<div class="meta">${esc(c.date)} · ${esc(c.topic)}</div>`).join("")}</div>`).join("");
+  },
+  sessions() {
+    if (!S.length) return empty("아직 대화 기록이 없어요.");
+    return [...S].reverse().map(s => `<div class="card"><h3>${esc(s.topic)}</h3><div class="meta">${esc(s.date)}</div>
+      <p>${esc(s.summary)}</p>
+      ${s.strengths?.length ? `<b>잘한 점</b><ul>${s.strengths.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+      ${(s.corrections || []).map(pair).join("")}</div>`).join("");
+  },
+  quiz() {
+    if (!all.length) return empty("교정 문장이 쌓이면 퀴즈가 만들어져요.");
+    const q = [...all].sort(() => Math.random() - 0.5);
+    return `<p class="meta">틀린 문장을 보고 올바르게 고쳐 말해본 뒤 정답을 확인하세요.</p>` +
+      q.map(c => `<div class="card quiz"><div><span class="said" style="text-decoration:none">${esc(c.said)}</span>
+        <span class="tag">${CAT[c.category] || esc(c.category)}</span></div>
+        <div class="answer"><div style="margin-top:8px">→ <span class="better">${esc(c.better)}</span></div><div class="why">${esc(c.why)}</div></div>
+        <button onclick="this.parentElement.classList.toggle('open')">정답 보기</button></div>`).join("");
+  },
+  expr() {
+    if (!exprs.length) return empty("대화 중 배운 표현이 여기에 모입니다.");
+    return `<div class="card">${exprs.map(e => `<div class="pair"><b>${esc(e.en)}</b><div class="why">${esc(e.ko)}</div></div>`).join("")}</div>`;
+  }
+};
+const tabs = document.getElementById("tabs");
+function show(t) {
+  tabs.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
+  document.getElementById("view").innerHTML = views[t]();
+}
+tabs.addEventListener("click", e => e.target.dataset.tab && show(e.target.dataset.tab));
+show("review");
+</script>
+</body>
+</html>
