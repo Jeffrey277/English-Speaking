@@ -138,6 +138,23 @@ body.quiz .fix.revealed .why{display:block}
 .center{flex:1;display:grid;place-items:center;padding:24px;text-align:center;color:var(--muted)}
 .center h2{font-family:var(--f-script);font-weight:500;color:var(--ink);font-size:1.3rem;margin:0 0 6px}
 
+/* voice call panel */
+.call{flex:none;border-top:1px solid var(--line);padding:16px 16px 18px;display:flex;flex-direction:column;align-items:center;gap:10px;background:var(--surface)}
+.orb{width:84px;height:84px;border-radius:50%;border:0;display:grid;place-items:center;background:var(--sunk);color:var(--muted);transition:background .2s}
+.orb svg{width:34px;height:34px}
+.call[data-phase="listening"] .orb{background:var(--danger);color:#fff;animation:pulse 1.6s infinite}
+.call[data-phase="speaking"] .orb{background:var(--accent);color:var(--accent-ink)}
+.call[data-phase="thinking"] .orb{background:var(--amber-soft);color:var(--amber)}
+.call[data-mic="off"] .orb{background:var(--sunk);color:var(--danger);animation:none}
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--danger) 45%,transparent)}100%{box-shadow:0 0 0 18px transparent}}
+.call .status{font-weight:600;font-size:14px;text-align:center}
+.call .live{min-height:1.6em;font-family:var(--f-script);font-size:17px;text-align:center;max-width:620px;overflow-wrap:anywhere}
+.call .live:empty::before{content:attr(data-ph);color:var(--muted);font-family:var(--f-ui);font-size:13px}
+.call .row{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;align-items:center}
+.call select{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:9px;padding:5px 6px;font:inherit;font-size:13px}
+.call .note{font-size:12px;color:var(--muted);text-align:center}
+.btn.voice.on{background:var(--danger);border-color:var(--danger);color:#fff}
+
 @media (max-width:860px){
   #menuBtn{display:inline-flex}
   .app{grid-template-columns:minmax(0,1fr)}
@@ -266,9 +283,18 @@ async function boot(){
   const [smp, dbx, usr, t, d] = await Promise.all(["sample","db","user","tts","dictation"].map(n => window.claude.use(n).catch(() => null)));
   sample = smp; tts = t; dict = d;
   if (dict){
-    dict.onPartial(({text}) => { const ta = $("#input"); if (ta) { ta.value = (ta.dataset.base || "") + text; autosize(ta); } });
-    dict.onFinal(({text}) => { const ta = $("#input"); if (ta) { ta.dataset.base = (ta.dataset.base || "") + text + " "; ta.value = ta.dataset.base; autosize(ta); } });
-    dict.onState(({state}) => { const b = $("#micBtn"); if (b) b.classList.toggle("on", state === "listening" || state === "starting"); });
+    dict.onPartial(({text}) => {
+      if (V.on) return voicePartial(text);
+      const ta = $("#input"); if (ta) { ta.value = (ta.dataset.base || "") + text; autosize(ta); }
+    });
+    dict.onFinal(({text}) => {
+      if (V.on) return voiceFinal(text);
+      const ta = $("#input"); if (ta) { const b = ta.dataset.base || ""; ta.dataset.base = b ? b + text : text.trimStart(); ta.value = ta.dataset.base; autosize(ta); }
+    });
+    dict.onState(({state}) => {
+      const b = $("#micBtn"); if (b) b.classList.toggle("on", state === "listening" || state === "starting");
+      if (V.on){ V.micOff = state === "idle"; drawCall(); }
+    });
   }
   const uid = usr ? await usr.id() : null;
   if (dbx && uid){
@@ -351,7 +377,8 @@ function startChat(topic){
   S.chat = { topic, messages: [{role:"assistant", content: topic.open}], hints: {}, startedAt: Date.now() };
   S.view = "chat"; S.tab = "topics";
   renderRail(); renderSheet(); closeRail();
-  if (S.autoSpeak) speak(topic.open);
+  if (V.on) sayThen(topic.open);
+  else if (S.autoSpeak) speak(topic.open);
   setTimeout(() => $("#input") && $("#input").focus(), 50);
 }
 function autosize(ta){ ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, 140) + "px"; }
@@ -360,6 +387,7 @@ function userTurns(){ return S.chat ? S.chat.messages.filter(m => m.role === "us
 function renderSheet(){
   const sh = $("#sheet");
   document.body.classList.toggle("quiz", S.quiz && S.view === "notes");
+  if (V.on && S.view !== "chat") voiceStop();
   if (S.view === "chat" && S.chat) return renderChat(sh);
   if (S.view === "review") return renderReview(sh);
   if (S.view === "notes") return renderNotes(sh);
@@ -374,27 +402,31 @@ function renderChat(sh){
     <div class="sheet-head">
       <div class="t"><div class="eyebrow">${esc(c.topic.ko)} · ${turns}턴</div><h1>${esc(c.topic.en)}</h1></div>
       <div class="head-actions">
+        ${dict ? `<button class="btn voice ${V.on ? "on" : ""}" id="voiceBtn" title="말하면 자동으로 보내고 Sam이 소리 내어 답하는 통화 모드">${ICON.mic}<span class="lbl">${V.on ? "통화 끝내기" : "음성 대화"}</span></button>` : ""}
         <button class="btn primary" id="finishBtn" ${turns < 1 || S.busy ? "disabled" : ""}>대화 마무리</button>
       </div>
     </div>
     <div class="log" id="log" aria-live="polite"></div>
     ${sample ? "" : `<div class="err" style="margin:0 12px 8px">이 화면에서는 Claude 응답 기능을 쓸 수 없어요. claude.ai에 로그인한 상태로 열어 주세요.</div>`}
+    ${V.on ? callHtml() : `
     <div class="subbar">
       ${tts ? `<label><input type="checkbox" id="autoSpeak" ${S.autoSpeak ? "checked" : ""}> Sam 답변 자동 읽기</label>` : ""}
-      <span>Enter 전송 · Shift+Enter 줄바꿈</span>
+      <span>${dict ? "🎤 눌러 말하기 · 음성 대화로 통화처럼 연습" : "음성 입력은 Chrome·Edge 브라우저나 Claude 데스크톱 앱에서 열면 쓸 수 있어요"} · Enter 전송</span>
     </div>
     <form class="composer" id="composer">
       ${dict ? `<button type="button" class="btn mic" id="micBtn" aria-label="말로 입력">${ICON.mic}</button>` : ""}
       <textarea id="input" rows="1" placeholder="Type your answer in English..." aria-label="영어로 답하기"></textarea>
       <button type="button" class="btn" id="hintBtn" ${S.busy || !sample ? "disabled" : ""} title="Sam의 질문 해석과 답변 예시">${ICON.hint}<span class="lbl">힌트</span></button>
       <button type="submit" class="btn primary" id="sendBtn" ${S.busy || !sample ? "disabled" : ""} aria-label="보내기">${ICON.send}</button>
-    </form>`;
+    </form>`}`;
   drawLog();
+  $("#finishBtn").onclick = finish;
+  const vb = $("#voiceBtn"); if (vb) vb.onclick = () => { if (V.on){ voiceStop(); renderChat($("#sheet")); } else voiceStart(); };
+  if (V.on){ bindCall(); drawCall(); return; }
   const ta = $("#input");
   ta.addEventListener("input", () => { ta.dataset.base = ta.value; autosize(ta); });
   ta.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing){ e.preventDefault(); send(); } });
   $("#composer").addEventListener("submit", e => { e.preventDefault(); send(); });
-  $("#finishBtn").onclick = finish;
   $("#hintBtn").onclick = hint;
   const as = $("#autoSpeak"); if (as) as.onchange = () => { S.autoSpeak = as.checked; };
   const mic = $("#micBtn"); if (mic) mic.onclick = toggleMic;
@@ -426,24 +458,146 @@ async function send(){
   const text = ta.value.trim(); if (!text) return;
   if (dict && dict.active()) { try { await dict.stop(); } catch(e){} }
   ta.value = ""; ta.dataset.base = ""; autosize(ta);
-  S.chat.messages.push({role:"user", content:text});
+  const reply = await sendText(text);
+  if (reply === null && $("#input")) $("#input").value = text;
+  if (reply && S.autoSpeak) speak(reply);
+  $("#input") && $("#input").focus();
+}
+/* sends one learner turn; returns Sam's reply, or null on failure */
+async function sendText(text){
+  if (!S.chat) return null;
+  const chat = S.chat;
+  chat.messages.push({role:"user", content:text});
   S.busy = true; renderChat($("#sheet"));
   drawLog(`<div class="msg" id="pending"><span class="av">S</span><div class="bubble typing">…</div></div>`);
   try {
-    const res = await sample(chatInput(S.chat), { cache:false, modelTier:"default", onText: ({text}) => {
+    const res = await sample(chatInput(chat), { cache:false, modelTier:"default", onText: ({text}) => {
       const p = document.querySelector("#pending .bubble"); if (p){ p.classList.remove("typing"); p.textContent = text; $("#log").scrollTop = 1e9; }
     }});
     const reply = (res.text || "").trim() || "Sorry, could you say that again?";
-    S.chat.messages.push({role:"assistant", content: reply});
-    S.busy = false; renderChat($("#sheet"));
-    if (S.autoSpeak) speak(reply);
+    chat.messages.push({role:"assistant", content: reply});
+    S.busy = false; if (S.chat === chat) renderChat($("#sheet"));
+    return reply;
   } catch(err){
-    S.chat.messages.pop();
-    S.busy = false; renderChat($("#sheet"));
-    $("#input").value = text;
-    drawLog(`<div class="err">${esc(errMsg(err))}</div>`);
+    chat.messages.pop();
+    S.busy = false; if (S.chat === chat){ renderChat($("#sheet")); drawLog(`<div class="err">${esc(errMsg(err))}</div>`); }
+    return null;
   }
-  $("#input") && $("#input").focus();
+}
+
+/* ---------- voice call mode ---------- */
+const V = { on:false, phase:"idle", base:"", partial:"", timer:null, ignoreUntil:0, micOff:false, safety:null };
+const synthOK = "speechSynthesis" in window && typeof SpeechSynthesisUtterance === "function";
+try { S.pauseMs = +localStorage.getItem("ets_pause") || 2500; S.rate = +localStorage.getItem("ets_rate") || 0.95; } catch(e){ S.pauseMs = 2500; S.rate = 0.95; }
+const PHASE_TEXT = {
+  listening: "듣고 있어요. 말을 멈추면 자동으로 보내요",
+  thinking: "Sam이 생각하는 중…",
+  speaking: "Sam이 말하는 중 (버튼을 누르면 건너뛰기)",
+  idle: "",
+};
+function liveText(){ return (V.base + V.partial).trim(); }
+function callHtml(){
+  return `<div class="call" id="call">
+    <button class="orb" id="orb" aria-label="음성 대화 버튼">${ICON.mic}</button>
+    <div class="status" id="callStatus"></div>
+    <div class="live" id="liveText" data-ph="영어로 말해 보세요"></div>
+    <div class="row">
+      <button class="btn" id="vSend">지금 보내기</button>
+      <button class="btn" id="vClear">다시 말하기</button>
+      <button class="btn" id="vHint" ${S.busy ? "disabled" : ""}>${ICON.hint}<span class="lbl">힌트</span></button>
+      <select id="vPause" aria-label="자동 전송까지 기다리는 시간">
+        ${[1500,2500,4000].map(ms => `<option value="${ms}" ${S.pauseMs === ms ? "selected" : ""}>멈춤 ${ms/1000}초 후 전송</option>`).join("")}
+      </select>
+      ${synthOK ? `<select id="vRate" aria-label="Sam 말하기 속도">${[[0.8,"천천히"],[0.95,"보통"],[1.1,"빠르게"]].map(([r,l]) => `<option value="${r}" ${S.rate === r ? "selected" : ""}>Sam 속도 ${l}</option>`).join("")}</select>` : ""}
+    </div>
+    <div class="note">${synthOK ? "스피커 소리가 마이크에 들어가지 않도록 이어폰을 쓰면 더 정확해요." : "이 브라우저는 Sam의 목소리를 낼 수 없어서 글로만 답해요."}</div>
+  </div>`;
+}
+function bindCall(){
+  $("#orb").onclick = () => {
+    if (V.micOff){ restartMic(); return; }
+    if (V.phase === "speaking"){ try { speechSynthesis.cancel(); } catch(e){} toListening(); return; }
+    if (V.phase === "listening") voiceSend();
+  };
+  $("#vSend").onclick = () => voiceSend();
+  $("#vClear").onclick = () => { V.base = ""; V.partial = ""; clearTimeout(V.timer); drawCall(); };
+  $("#vHint").onclick = () => hint();
+  $("#vPause").onchange = e => { S.pauseMs = +e.target.value; try { localStorage.setItem("ets_pause", S.pauseMs); } catch(_){} };
+  const vr = $("#vRate"); if (vr) vr.onchange = e => { S.rate = +e.target.value; try { localStorage.setItem("ets_rate", S.rate); } catch(_){} };
+}
+function drawCall(){
+  const c = $("#call"); if (!c) return;
+  c.dataset.phase = V.phase; c.dataset.mic = V.micOff ? "off" : "on";
+  $("#callStatus").textContent = V.micOff ? "마이크가 꺼졌어요. 가운데 버튼을 눌러 다시 켜 주세요" : PHASE_TEXT[V.phase] || "";
+  $("#liveText").textContent = V.phase === "listening" ? liveText() : "";
+  $("#vSend").disabled = V.phase !== "listening" || !liveText();
+}
+function voiceStart(){
+  if (!dict || !S.chat || !sample) return;
+  V.on = true; V.micOff = false; V.base = ""; V.partial = "";
+  dict.start({ language:"en" }).catch(onMicError);   // must run synchronously inside the click
+  if (synthOK){ try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } catch(e){} }
+  V.phase = "idle";
+  renderChat($("#sheet"));
+  const last = S.chat.messages[S.chat.messages.length - 1];
+  if (S.busy) setPhase("thinking");
+  else if (last && last.role === "assistant") sayThen(last.content);
+  else toListening();
+}
+function restartMic(){
+  if (!dict) return;
+  V.micOff = false; drawCall();
+  dict.start({ language:"en" }).catch(onMicError);
+}
+function onMicError(err){
+  if (!V.on) return;
+  const code = err && err.code;
+  if (code === "not_granted" || code === "unavailable"){
+    voiceStop(); renderChat($("#sheet"));
+    drawLog(`<div class="err">${code === "not_granted" ? "마이크 사용이 허용되지 않았어요. 페이지 권한 메뉴에서 받아쓰기를 허용해 주세요." : "이 화면에서는 음성 입력을 쓸 수 없어요."}</div>`);
+  } else { V.micOff = true; drawCall(); }
+}
+function voiceStop(){
+  V.on = false; V.phase = "idle"; clearTimeout(V.timer); clearTimeout(V.safety);
+  if (synthOK) try { speechSynthesis.cancel(); } catch(e){}
+  if (dict && dict.active()) dict.stop().catch(() => {});
+}
+function setPhase(p){ V.phase = p; if (p !== "listening") clearTimeout(V.timer); drawCall(); }
+function toListening(){
+  clearTimeout(V.safety);
+  V.base = ""; V.partial = ""; V.ignoreUntil = Date.now() + (synthOK ? 700 : 0);
+  setPhase("listening");
+}
+function heard(){ return V.on && V.phase === "listening" && Date.now() >= V.ignoreUntil; }
+function voicePartial(text){ if (!heard()) return; V.partial = text; drawCall(); arm(); }
+function voiceFinal(text){ if (!heard()) return; V.base = V.base ? V.base + text : text.trimStart(); V.partial = ""; drawCall(); arm(); }
+function arm(){ clearTimeout(V.timer); if (liveText()) V.timer = setTimeout(voiceSend, S.pauseMs); }
+async function voiceSend(){
+  const t = liveText();
+  if (!V.on || V.phase !== "listening" || !t || S.busy) return;
+  setPhase("thinking");
+  const chat = S.chat;
+  const reply = await sendText(t);
+  if (!V.on || S.chat !== chat) return;
+  if (reply) sayThen(reply); else toListening();
+}
+function pickVoice(){
+  try {
+    const vs = speechSynthesis.getVoices().filter(v => /^en[-_]US/i.test(v.lang));
+    return vs.find(v => /natural|google us english|samantha|aria|jenny|ava/i.test(v.name)) || vs[0] || null;
+  } catch(e){ return null; }
+}
+function sayThen(text){
+  if (!V.on) return;
+  if (!synthOK){ toListening(); return; }
+  setPhase("speaking");
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "en-US"; u.rate = S.rate; const v = pickVoice(); if (v) u.voice = v;
+  const done = () => { if (V.on && V.phase === "speaking") setTimeout(() => { if (V.on && V.phase === "speaking") toListening(); }, 400); };
+  u.onend = done; u.onerror = done;
+  clearTimeout(V.safety);
+  V.safety = setTimeout(done, text.split(/\s+/).length * 600 / S.rate + 4000);
+  try { speechSynthesis.cancel(); speechSynthesis.speak(u); } catch(e){ toListening(); }
 }
 function errMsg(err){
   const code = err && err.code;
@@ -486,6 +640,7 @@ function toggleMic(){
 /* ---------- finish & review ---------- */
 async function finish(){
   if (S.busy || !sample || userTurns() < 1) return;
+  if (V.on) voiceStop();
   if (dict && dict.active()) { try { await dict.stop(); } catch(e){} }
   S.busy = true; renderChat($("#sheet"));
   drawLog(`<div class="hint typing">대화를 분석해서 교정 노트를 만드는 중이에요…</div>`);
