@@ -1,15 +1,10 @@
 # English Speaking Practice
 
-이 저장소는 사용자가 Claude와 영어로 대화하며 회화를 연습하는 공간이다 (듀오링고 "릴리와 영상통화" 같은 방식).
+`talk-studio.html` 은 claude.ai Artifact "English Talk Studio"
+(https://claude.ai/artifact/VMAzdmup3M7yxoBQqAeug8) 의 원본이다.
 
-## 대화 방식
-- 사용자가 대화를 시작하면 친근한 대화 상대로서 **영어로** 자연스럽게 대화한다. 짧게 답하고, 질문으로 대화를 이어간다.
-- 대화 도중에는 흐름을 끊지 않는다. 의미가 통하지 않을 정도의 오류만 가볍게 짚는다.
-- 사용자의 문장 중 틀리거나 어색한 부분은 머릿속으로 기록해둔다.
+- 왼쪽: 대화 주제 / 지난 주제 / 오답노트 탭
+- 오른쪽: Sam(AI 대화 상대)과의 채팅, 마무리하면 교정 노트
+- 기능: sample(대화·힌트·교정 분석), db(사용자별 비공개 기록: data/users/<id>), tts(듣기), dictation(말로 입력)
 
-## 정리 (사용자가 "정리해줘", "끝", "wrap up" 등을 말하면)
-1. `data.js`의 `window.SESSIONS` 배열에 이번 세션을 추가한다 (날짜, 주제, 한국어 총평, 잘한 점, corrections, expressions).
-   - corrections: 사용자가 실제로 한 문장(`said`) → 자연스러운 문장(`better`), `category`, 한국어 설명(`why`).
-   - 사용자가 실제로 말하지 않은 문장은 절대 지어내지 않는다.
-2. 채팅에도 짧게 요약하고, 이전 세션과 반복되는 실수가 있으면 짚어준다.
-3. 브랜치에 커밋하고 push한다. `index.html`이 오답노트/퀴즈를 자동으로 보여준다.
+수정할 때는 이 파일을 고친 뒤 같은 파일 경로로 Artifact를 다시 publish 한다 (capabilities는 생략해서 유지).
